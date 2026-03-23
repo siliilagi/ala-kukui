@@ -485,13 +485,258 @@ function resetPrompt(key){if(!confirm("Reset to default?"))return;delete savedPr
 function togglePromptEditor(key){const p=document.getElementById(`tpanel-${key}`);const open=p.classList.toggle("open");document.getElementById(`ttog-${key}`).textContent=open?"Hide prompt":"Edit prompt";}
 const TMPL_DOCS=[{key:"checkin",title:"Check-in document",type:"DOCX",file:"Ala_Kukui_Check_In_Document.docx",desc:"Guest reservation confirmation with accommodations and housekeeping rules."},{key:"fuaGeneral",title:"FUA — General",type:"DOCX",file:"Ala_Kukui_FUA_General.docx",promptKey:"fua",desc:"Standard overnight Facility Use Agreement."},{key:"fuaWedding",title:"FUA — Wedding",type:"DOCX",file:"Ala_Kukui_FUA_Wedding.docx",promptKey:"fua",desc:"Nā Kupaʻāina o Hāna Wedding Retreat FUA."},{key:"fuaReunion",title:"FUA — Reunion",type:"DOCX",file:"Ala_Kukui_FUA_Reunion.docx",promptKey:"fua",desc:"Nā Kupaʻāina o Hāna ʻOhana Reunion FUA."},{key:"fuaMemorial",title:"FUA — Memorial",type:"DOCX",file:"Ala_Kukui_FUA_Memorial.docx",promptKey:"fua",desc:"Nā Kupaʻāina o Hāna ʻOhana Memorial FUA."},{key:"fuaDayuse",title:"FUA — Day-use",type:"DOCX",file:"Ala_Kukui_FUA_Day_Use.docx",promptKey:"fua",desc:"Day-use Retreat House Facility Use Agreement."},{key:"quotePdf",title:"Quote",type:"DOCX",file:"Ala_Kukui_Quote.docx",promptKey:"quotepdf",desc:"Pricing breakdown with descriptions and policies."},{key:"quoteEmail",title:"Quote email",type:"EMAIL",file:null,promptKey:"quoteemail",desc:"AI-generated warm email quote — no template file."},{key:"prodSheet",title:"Production sheet",type:"XLSX",file:"Ala_Kukui_Retreat_Production_Sheet.xlsx",promptKey:"prod",desc:"Staff operations workbook with pricing, payments, and database row."},{key:"ical",title:"Calendar event",type:"TEXT",file:null,promptKey:"ical",desc:"Copy-paste calendar event text — no template file."}];
 function renderTemplates(){document.getElementById("tmplGrid").innerHTML=TMPL_DOCS.map(doc=>{const pk=doc.promptKey||doc.key;const isEdited=!!savedPrompts[pk];return`<div class="tmpl-card"><div class="tmpl-title">${doc.title} <span class="doc-type">${doc.type}</span>${isEdited?` <span class="b-edited badge">EDITED</span>`:""}</div><div class="tmpl-desc">${doc.desc}</div><div class="btn-row" style="flex-wrap:wrap;gap:6px;margin-bottom:6px;">${doc.file?`<button class="dl-btn" onclick="downloadTmpl('${doc.file}')"><svg viewBox="0 0 16 16"><path d="M8 2v8M5 7l3 3 3-3M2 11v2a1 1 0 001 1h10a1 1 0 001-1v-2"/></svg>Download template</button>`:`<span style="font-size:11px;color:var(--text3);">No template file</span>`}<button class="edit-tog" id="ttog-${doc.key}" onclick="togglePromptEditor('${doc.key}')">Edit prompt</button></div><div class="prompt-panel" id="tpanel-${doc.key}"><label>AI prompt${isEdited?" · <strong>Modified</strong>":""} — {variables} replaced with booking data at generation</label><textarea id="tprompt-${doc.key}">${(getPrompt(pk)).replace(/</g,"&lt;")}</textarea><div style="display:flex;align-items:center;gap:8px;margin-top:6px;"><button class="save-btn" onclick="savePrompt('${pk}')">Save</button><button class="rst-btn" onclick="resetPrompt('${pk}')">Reset to default</button><span class="saved-ok" id="tsaved-${pk}">Saved ✓</span></div></div></div>`;}).join("");}
-function downloadTmpl(filename){alert(`To download: right-click the file "${filename}" in your project files, or access it from the outputs folder.\n\nIn the deployed app at siliilagi.github.io/ala-kukui, add the DOCX/XLSX files to your repo and link them here.`);}
+function downloadTmpl(filename){window.open("./" + filename, "_blank");}
 function setDocState(key,state){const dot=document.getElementById(`dot-${key}`);const btn=document.getElementById(`btn-${key}`);if(dot)dot.className=`dot dot-${state}`;if(btn)btn.disabled=state==="loading";}
-async function generateDoc(key){setDocState(key,"loading");const out=document.getElementById(`out-${key}`),copyBtn=document.getElementById(`copy-${key}`);out.style.display="block";out.textContent="Generating…";const data=getBookingData();try{const content=await callClaude(key,data);docOutputs[key]=content;out.textContent=content;copyBtn.style.display="inline-block";setDocState(key,"done");}catch(e){out.textContent="Error: "+e.message;setDocState(key,"error");}}
-async function generateAll(){document.getElementById("genAllBtn").disabled=true;for(const k of["prod","checkin","fua","quotepdf","quoteemail","ical"])await generateDoc(k);document.getElementById("genAllBtn").disabled=false;}
+function generateDoc(key){setDocState(key,"loading");const out=document.getElementById(`out-${key}`),copyBtn=document.getElementById(`copy-${key}`);out.style.display="block";const data=getBookingData();const content=buildDoc(key,data);docOutputs[key]=content;out.textContent=content;copyBtn.style.display="inline-block";setDocState(key,"done");}
+function generateAll(){const keys=["prod","checkin","fua","quotepdf","quoteemail","ical"];keys.forEach(k=>generateDoc(k));}
 function copyDoc(key){navigator.clipboard.writeText(docOutputs[key]||"").then(()=>{const b=document.getElementById(`copy-${key}`),o=b.textContent;b.textContent="Copied!";setTimeout(()=>b.textContent=o,1500);});}
-function fillPrompt(tmpl,data){return tmpl.replace(/\{(\w+)\}/g,(m,k)=>data[k]!==undefined?data[k]:m);}
-async function callClaude(key,data){const promptKey=key==="fua"?"fua":key==="checkin"?"checkin":key==="quotepdf"?"quotepdf":key==="quoteemail"?"quoteemail":key==="prod"?"prod":"ical";const promptTmpl=getPrompt(promptKey);const prompt=fillPrompt(promptTmpl,data);const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content:prompt}]})});const json=await resp.json();if(json.error)throw new Error(json.error.message);return json.content[0].text;}
+
+function buildDoc(key,d){
+  const na=v=>v||"—";
+  const fuaNames={general:"General Overnight",dayuse:"Day-Use Retreat House",wedding:"Nā Kupaʻāina o Hāna Wedding Retreat",reunion:"Nā Kupaʻāina o Hāna ʻOhana Reunion",memorial:"Nā Kupaʻāina o Hāna ʻOhana Memorial"};
+  const today=d.today;
+
+  if(key==="prod"){
+    return[
+`RETREAT PRODUCTION SHEET — ${na(d.orgName)}`,
+`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+``,
+`CONTACT INFORMATION`,
+`  Business / Group:   ${na(d.orgName)}`,
+`  Contact Name:       ${na(d.guestFirst)} ${na(d.guestLast)}`,
+`  Phone:              ${na(d.phone)}`,
+`  Email:              ${na(d.email)}`,
+`  2nd Contact:        ${na(d.contact2)}`,
+`  Mailing Address:    ${na(d.address)}`,
+``,
+`DATES & STAY`,
+`  Check-in:           ${na(d.checkInFmt)} at ${na(d.arrTimeFmt)}`,
+`  Check-out:          ${na(d.checkOutFmt)} at ${na(d.depTimeFmt)}`,
+`  Nights:             ${na(d.nights)}`,
+`  Guests (PAX):       ${na(d.pax)}`,
+`  Visiting From:      ${na(d.visitFrom)}`,
+`  Purpose:            ${na(d.purpose)}`,
+`  How Heard:          ${na(d.howHeard)}`,
+``,
+`ACCOMMODATIONS`,
+d.bookedAccoms?`  ${d.bookedAccoms}`:`  None selected`,
+``,
+`BED CONFIGURATIONS`,
+d.bedLines?`  ${d.bedLines.split(" | ").join("\n  ")}`:`  Not yet set`,
+``,
+`PRICING`,
+`  Rate Year:          ${na(d.year)}`,
+`  Org Type:           ${na(d.orgType)}`,
+`  Subtotal:           ${na(d.subtotalFmt)}`,
+`  KOK Fee (10%):      ${na(d.kokFmt)}`,
+`  Security Deposit:   ${na(d.secDepFmt)}`,
+`  RETREAT TOTAL:      ${na(d.totalFmt)}`,
+`  1st Deposit (50%):  ${na(d.dep1Fmt)}`,
+`  Balance (50%):      ${na(d.dep2Fmt)}`,
+``,
+`INVOICE`,
+`  Invoice #:          ${na(d.invoiceNum)}`,
+`  Guest Count Due:    ${na(d.guestDueFmt)}`,
+`  Deposit Due:        ${na(d.depositDueFmt)}`,
+``,
+`NOTES`,
+`  ${na(d.notes)}`,
+``,
+`BOOKING CHECKLIST`,
+`  [ ] Invoice sent`,
+`  [ ] FUA sent`,
+`  [ ] FUA signed`,
+`  [ ] Check-in doc sent`,
+`  [ ] Final guest count & bed config received`,
+`  [ ] Balance payment received`,
+`  [ ] Security deposit received`,
+`  [ ] Security deposit refunded`,
+`  [ ] Mahalo / survey sent`,
+`  [ ] Added to Retreat Database`,
+``,
+`RETREAT DATABASE ROW`,
+`  CHECK-IN: ${na(d.checkInFmt)} | CHECK-OUT: ${na(d.checkOutFmt)} | PURPOSE: ${na(d.purpose)} | REFF BY: ${na(d.howHeard)} | VISITING FROM: ${na(d.visitFrom)} | GROUP: ${na(d.orgName)} | CONTACT: ${na(d.guestFirst)} ${na(d.guestLast)} | PHONE: ${na(d.phone)} | EMAIL: ${na(d.email)} | ACCOMMODATIONS: ${na(d.bookedAccoms)} | GUESTS: ${na(d.pax)} | INVOICE: ${na(d.invoiceNum)} | TOTAL: ${na(d.totalFmt)} | 1ST DEPOSIT: ${na(d.dep1Fmt)} | BALANCE: ${na(d.dep2Fmt)} | NON-PROFIT: ${d.orgType&&d.orgType.includes("Non-profit")?"x":""}`,
+    ].join("\n");
+  }
+
+  if(key==="checkin"){
+    const accomDescs={
+      "Retreat House":"Four bedrooms, three bathrooms, lānai, gathering room, dining room, kitchenette, and detached, fully-equipped commercial kitchen. Hand and body soap provided. 14 guests maximum.",
+      "Kapueokahi Apartment":"One bedroom with one king bed or two singles, full bathroom and tub, kitchenette, living room, outdoor patio. Hand and body soap provided. Double Occupancy.",
+      "Nahiku 1":"Two single beds, full bathroom, desk and chair, and front patio. In-room amenities include a mini-fridge, microwave, hot water kettle, French press, coffee, tea, water glasses, and mugs. Hand and body soap provided. Double occupancy.",
+      "Nahiku 2":"King bed, full bathroom, desk and chair, and front patio. In-room amenities include a mini-fridge, microwave, hot water kettle, French press, coffee, tea, water glasses, and mugs. Hand and body soap provided. Double occupancy.",
+      "Kipahulu 1":"King bed, full bathroom, desk and chair, and front patio. In-room amenities include a mini-fridge, microwave, hot water kettle, French press, coffee, tea, water glasses, and mugs. Hand and body soap provided. Double occupancy.",
+      "Kipahulu 2":"King bed, full bathroom, desk and chair, and front patio. In-room amenities include a mini-fridge, microwave, hot water kettle, French press, coffee, tea, water glasses, and mugs. Hand and body soap provided. Double occupancy.",
+    };
+    const bookedList=ACCOMS.filter(a=>S.accoms[a.id]).map(a=>a.label);
+    const accomBlock=bookedList.map(name=>`  ${name}\n  ${accomDescs[name]||""}`).join("\n\n");
+    return[
+`RESERVATION CONFIRMATION & CHECK-IN DETAILS`,
+``,
+`Primary Guest Name:  ${na(d.guestFirst)} ${na(d.guestLast)}`,
+`Email Address:       ${na(d.email)}`,
+`No. of Guests:       ${na(d.pax)}`,
+`Contact Number:      ${na(d.phone)}`,
+`Arrival Date:        ${na(d.checkInFmt)}`,
+`Check-in Time:       1:00 PM`,
+`Departure Date:      ${na(d.checkOutFmt)}`,
+`Checkout Time:       11:00 AM`,
+``,
+`ACCOMMODATIONS`,
+accomBlock||`  None selected`,
+``,
+`BED CONFIGURATIONS`,
+d.bedLines?`  ${d.bedLines.split(" | ").join("\n  ")}`:`  Not yet confirmed`,
+    ].join("\n");
+  }
+
+  if(key==="fua"){
+    const ft=d.fuaType;
+    const name=fuaNames[ft]||"General Overnight";
+    const payLine=ft==="dayuse"
+      ?`Full payment of ${d.totalFmt} is due upon signing this agreement.`
+      :ft==="wedding"
+      ?`A 50% deposit of ${d.dep1Fmt} is required at booking. The balance of ${d.dep2Fmt} is due one month prior to arrival.`
+      :`A 50% deposit of ${d.dep1Fmt} is required at booking. The balance of ${d.dep2Fmt} is due two months prior to arrival.`;
+    return[
+`ALA KUKUI — FACILITY USE AGREEMENT`,
+`${name}`,
+``,
+`Agreement Date:       ${today}`,
+``,
+`This Agreement is between the undersigned client ("presenter") and Ala Kukui for`,
+`${na(d.orgName)||"[Group Name]"} — ${na(d.purpose)||"Retreat"} ("retreat").`,
+``,
+`RETREAT SCHEDULE`,
+`  Check-in:   ${na(d.checkInFmt)} at 1:00 p.m.`,
+`  Checkout:   ${na(d.checkOutFmt)} at 11:00 a.m.`,
+`  Nights:     ${na(d.nights)}`,
+``,
+`ACCOMMODATIONS  (overnight guest capacity: 22)`,
+`  ${na(d.bookedAccoms)}`,
+``,
+`RATE AND PAYMENT SCHEDULE`,
+`  Retreat total:  ${na(d.totalFmt)}`,
+`  ${payLine}`,
+`  Invoice: ${na(d.invoiceNum)}`,
+``,
+`ADDITIONAL ITEMS`,
+`  Final guest count and bed configurations are due by ${na(d.guestDueFmt)||"one month prior"}.`,
+``,
+`PRIMARY CONTACT`,
+`  Name:     ${na(d.guestFirst)} ${na(d.guestLast)}`,
+`  Email:    ${na(d.email)}`,
+`  Phone:    ${na(d.phone)}`,
+`  Address:  ${na(d.address)}`,
+``,
+`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+`CLIENT SIGNATURE`,
+``,
+`First and Last Name (PRINT): ________________________________`,
+``,
+`Signature: ________________________________   Date: __________`,
+``,
+`Email: ________________________________`,
+``,
+`Contact Number: ________________________________`,
+    ].join("\n");
+  }
+
+  if(key==="quotepdf"){
+    return[
+`ALA KUKUI — RETREAT QUOTE`,
+`Prepared: ${today}`,
+``,
+`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+`RETREAT SUMMARY`,
+``,
+`  Guest:          ${na(d.guestFirst)} ${na(d.guestLast)}`,
+`  Organization:   ${na(d.orgName)}`,
+`  Dates:          ${na(d.checkInFmt)} – ${na(d.checkOutFmt)}`,
+`  Nights:         ${na(d.nights)}`,
+`  Guests:         ${na(d.pax)}`,
+`  Check-in/out:   1:00 PM / 11:00 AM`,
+`  Accommodations: ${na(d.bookedAccoms)}`,
+`  Rate Year:      ${na(d.year)}  |  Org Type: ${na(d.orgType)}`,
+``,
+`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+`PRICING BREAKDOWN`,
+``,
+`  Subtotal:                              ${na(d.subtotalFmt)}`,
+`  Kūpono o Kāmoku Stewardship (10%):    ${na(d.kokFmt)}`,
+`  Security Deposit (refundable):         ${na(d.secDepFmt)}`,
+`                                         ───────────`,
+`  RETREAT TOTAL:                         ${na(d.totalFmt)}`,
+``,
+`  1st Deposit due at booking (50%):      ${na(d.dep1Fmt)}`,
+`  Balance due 2 months prior (50%):      ${na(d.dep2Fmt)}`,
+``,
+`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+`CANCELLATION POLICY`,
+``,
+`  Less than 30 days prior: full retreat total forfeited.`,
+`  30+ days prior: 40% held as credit (valid 1 year) +`,
+`  10% non-refundable cancellation fee.`,
+``,
+`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+`Questions? (808) 248-7841 · contact@alakukui.org`,
+    ].join("\n");
+  }
+
+  if(key==="quoteemail"){
+    const accomList=d.bookedAccoms||"[accommodations to be confirmed]";
+    return[
+`Aloha ${na(d.guestFirst)},`,
+``,
+`Mahalo for your interest in Ala Kukui! We would love to host you and`,
+`your group in Hāna. Below is a pricing summary for your stay.`,
+``,
+`RETREAT DETAILS`,
+`  Dates:          ${na(d.checkInFmt)} – ${na(d.checkOutFmt)} (${na(d.nights)} nights)`,
+`  Guests:         ${na(d.pax)}`,
+`  Accommodations: ${accomList}`,
+`  Purpose:        ${na(d.purpose)}`,
+``,
+`PRICING SUMMARY`,
+`  Retreat total:     ${na(d.totalFmt)}`,
+`  1st deposit (50%): ${na(d.dep1Fmt)}  — due at booking`,
+`  Balance (50%):     ${na(d.dep2Fmt)}  — due 2 months before arrival`,
+`  Security deposit:  ${na(d.secDepFmt)} (refundable within 14 days of checkout)`,
+``,
+`To move forward, please reply to this email and we will send over`,
+`your Facility Use Agreement and invoice.`,
+``,
+`Me ke aloha,`,
+`Ala Kukui`,
+`(808) 248-7841  ·  contact@alakukui.org  ·  www.alakukui.org`,
+    ].join("\n");
+  }
+
+  if(key==="ical"){
+    const title=`${na(d.orgName)} — ${na(d.guestFirst)} ${na(d.guestLast)}`;
+    const location=d.bookedAccoms||"Ala Kukui, Kāmoku, Hāna";
+    const bedBlock=d.bedLines?`BED CONFIGURATIONS\n  ${d.bedLines.split(" | ").join("\n  ")}\n`:"";
+    return[
+`TITLE: ${title}`,
+`LOCATION: ${location}`,
+`START: ${na(d.checkInFmt)} at ${na(d.arrTimeFmt)}`,
+`END: ${na(d.checkOutFmt)} at ${na(d.depTimeFmt)}`,
+``,
+bedBlock,
+`GUEST INFO`,
+`  Primary Guest Name: ${na(d.guestFirst)} ${na(d.guestLast)}`,
+d.orgName?`  Org: ${d.orgName}`:"",
+d.phone?`  Phone: ${d.phone}`:"",
+d.email?`  Email: ${d.email}`:"",
+d.pax?`  Guests: ${d.pax}`:"",
+d.purpose?`  Purpose: ${d.purpose}`:"",
+d.visitFrom?`  Visiting From: ${d.visitFrom}`:"",
+d.howHeard?`  Reff. By: ${d.howHeard}`:"",
+d.notes?`  Notes: ${d.notes}`:"",
+    ].filter(l=>l!==undefined&&l!==null).join("\n");
+  }
+  return"";
+}
 loadPrompts();renderAccoms();renderFacs();renderBedConfig();calc();renderTemplates();
 </script>
 </body>
